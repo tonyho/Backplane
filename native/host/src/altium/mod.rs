@@ -103,6 +103,40 @@ pub fn cp1252(b: &[u8]) -> String {
     b.iter().map(|&c| if (0x80..0xA0).contains(&c) { HI[(c - 0x80) as usize] } else { c as char }).collect()
 }
 
+/// Decode 8-bit Altium text: try UTF-8 first, then GBK (if multi-byte CJK sequences exist and decode cleanly),
+/// and fall back to Windows-1252.
+pub fn decode_text(b: &[u8]) -> String {
+    if let Ok(s) = std::str::from_utf8(b) {
+        return s.to_string();
+    }
+    let mut i = 0;
+    let mut has_high_pair = false;
+    let mut valid_high_pairs = true;
+    while i < b.len() {
+        if b[i] >= 0x81 {
+            if i + 1 < b.len() && b[i + 1] >= 0x80 {
+                has_high_pair = true;
+                i += 2;
+                continue;
+            }
+            valid_high_pairs = false;
+            break;
+        } else {
+            i += 1;
+        }
+    }
+    if has_high_pair && valid_high_pairs {
+        let (cow, had_errors) = encoding_rs::GBK.decode_without_bom_handling(b);
+        if !had_errors {
+            let s = cow.as_ref();
+            if s.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c) || c == '\u{03a9}' || ('\u{3000}'..='\u{303f}').contains(&c)) {
+                return s.to_string();
+            }
+        }
+    }
+    cp1252(b)
+}
+
 /// One record's properties: keys upper-cased; a `%UTF8%KEY` value replaces KEY's 8-bit one.
 #[derive(Clone, Debug, Default)]
 pub struct Props(pub HashMap<String, String>);
@@ -120,7 +154,7 @@ impl Props {
             if let Some(rest) = key.strip_prefix("%UTF8%") {
                 utf8.push((rest.to_string(), String::from_utf8_lossy(v).into_owned()));
             } else {
-                m.insert(key, cp1252(v));
+                m.insert(key, decode_text(v));
             }
         }
         for (k, v) in utf8 { m.insert(k, v); }
@@ -260,6 +294,15 @@ mod tests {
         assert_eq!(p.get("LIBREFERENCE"), "Rés€");
         assert_eq!(p.int("LOCATION.X"), 100);
         assert_eq!(p.get("MISSING"), "");
+    }
+    #[test] fn decode_text_encodings() {
+        assert_eq!(decode_text(b"\xcc\xf9\xc6\xac\xb5\xe7\xd7\xe8"), "贴片电阻");
+        assert_eq!(decode_text(b"0402 47K\xa6\xb8 1%"), "0402 47KΩ 1%");
+        assert_eq!(decode_text(b"DC-DC 5V\xe5\x88\xb03.3V"), "DC-DC 5V到3.3V");
+        assert_eq!(decode_text(b"R\xe9s"), "Rés");
+        assert_eq!(decode_text(b"10\xb5F 16V"), "10µF 16V");
+        let p = Props::parse(b"|RECORD=1|SOURCEDESCRIPTION=\xcc\xf9\xc6\xac\xb5\xe7\xd7\xe8|");
+        assert_eq!(p.get("SOURCEDESCRIPTION"), "贴片电阻");
     }
     #[test] fn nums_with_units() {
         assert_eq!(parse_num("10mil"), 10.0);

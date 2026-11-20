@@ -213,7 +213,7 @@ pub fn ascii_pas(src: &str) -> String {
 /// every character past ASCII), because Altium saves a TStringList in the ANSI code page and has no TEncoding; anything else is
 /// read as Windows-1252, never dropped.
 pub fn decode_out(b: &[u8]) -> String {
-    let s = match std::str::from_utf8(b) { Ok(s) => s.to_string(), Err(_) => b.iter().map(|&x| cp1252(x)).collect() };
+    let s = super::decode_text(b);
     unescape(&s)
 }
 fn cp1252(b: u8) -> char {

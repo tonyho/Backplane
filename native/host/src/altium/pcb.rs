@@ -498,7 +498,7 @@ pub(super) struct PadRec {
 pub(super) fn pad_recs(src: &Src) -> Vec<PadRec> {
     let mut out = vec![];
     for (i, rec, subs) in records(src.get("Pads6"), 2, 6) {
-        let name = { let mut r = Bin::new(subs[0]); let n = r.u8() as usize; super::cp1252(r.bytes(n)) };
+        let name = { let mut r = Bin::new(subs[0]); let n = r.u8() as usize; super::decode_text(r.bytes(n)) };
         let s5 = subs[4];
         if s5.len() < 110 { continue }
         let mut r = Bin::new(s5);
@@ -704,7 +704,7 @@ impl<'a> Ctx<'a> {
                 if rem >= 115 { just_ok = r.u8() != 0 }
             }
             if ft == 2 { continue } // a barcode
-            let text = match self.wide.get(&wide) { Some(s) => s.clone(), None => { let mut q = Bin::new(subs[1]); let n = q.u8() as usize; super::cp1252(q.bytes(n)) } }.replace("\r\n", "\n");
+            let text = match self.wide.get(&wide) { Some(s) => s.clone(), None => { let mut q = Bin::new(subs[1]); let n = q.u8() as usize; super::decode_text(q.bytes(n)) } }.replace("\r\n", "\n");
             let m = if offset_border { offset } else { margin };
             let frame = if is_frame { Some((frame_wh.0, frame_wh.1, m, if just_ok { just } else { 3 })) } else { None };
             out.push(Text { rec_i: i, sig: sig(rec), layer: versioned(layer, v7), comp: if comp == NONE { None } else { Some(comp as usize) }, x, y, h, rot, mirror, pen,
