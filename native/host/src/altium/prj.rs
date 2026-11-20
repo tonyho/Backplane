@@ -34,14 +34,21 @@ pub fn parameters(text: &str) -> Vec<(String, String)> {
     if let Some((n, v)) = cur { if !n.is_empty() { out.push((n, v)) } }
     out
 }
-/// The project file (.PrjPcb) in a sheet's folder that lists that sheet, if any.
+/// The project file (.PrjPcb) in a sheet's folder or parent folders that lists that sheet, if any.
 pub fn find_for(sheet: &str) -> Option<String> {
     let p = std::path::Path::new(sheet);
-    let (dir, name) = (p.parent()?, p.file_name()?.to_string_lossy().to_lowercase());
-    let mut ps: Vec<_> = std::fs::read_dir(dir).ok()?.flatten().map(|e| e.path()).filter(|q| q.extension().map_or(false, |x| x.eq_ignore_ascii_case("prjpcb"))).collect();
-    ps.sort();
-    ps.into_iter().find(|q| std::fs::read(q).map(|b| of_kind(&String::from_utf8_lossy(&b), super::Kind::Schematic).iter().any(|d| d.rsplit('/').next().unwrap_or(d).to_lowercase() == name)).unwrap_or(false))
-        .map(|q| q.to_string_lossy().into_owned())
+    let name = p.file_name()?.to_string_lossy().to_lowercase();
+    let mut cur = p.parent();
+    for _ in 0..4 {
+        let dir = cur?;
+        let mut ps: Vec<_> = std::fs::read_dir(dir).ok()?.flatten().map(|e| e.path()).filter(|q| q.extension().map_or(false, |x| x.eq_ignore_ascii_case("prjpcb"))).collect();
+        ps.sort();
+        if let Some(found) = ps.into_iter().find(|q| std::fs::read(q).map(|b| of_kind(&String::from_utf8_lossy(&b), super::Kind::Schematic).iter().any(|d| d.rsplit(['/', '\\']).next().unwrap_or(d).to_lowercase() == name)).unwrap_or(false)) {
+            return Some(found.to_string_lossy().into_owned());
+        }
+        cur = dir.parent();
+    }
+    None
 }
 static ROOTS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, (std::time::Instant, Vec<String>)>>> = std::sync::OnceLock::new();
 /// The project's sheets no other sheet of it places (its top-level sheets: the top of a hierarchy, and every sheet of a flat design), in
@@ -91,5 +98,15 @@ mod tests {
     #[test] fn project_parameters() {
         let t = "[Design]\r\nVersion=1.0\r\n[Parameter1]\r\nName=CompanyName\r\nValue=Example Ltd\r\n\r\n[Parameter2]\r\nName=Rev\r\nValue=\r\n[ParameterSettings]\r\nName=x\r\n[Parameter3]\r\nValue=A=B\r\nName=Note\r\n";
         assert_eq!(parameters(t), [("CompanyName".to_string(), "Example Ltd".to_string()), ("Rev".to_string(), String::new()), ("Note".to_string(), "A=B".to_string())]);
+    }
+    #[test] fn find_for_in_parent_folder() {
+        let d = crate::plat::tmp::dir("alt-find");
+        let sch_dir = d.join("Sch");
+        std::fs::create_dir_all(&sch_dir).unwrap();
+        let prj = d.join("Thing.PrjPcb");
+        std::fs::write(&prj, "[Design]\r\n[Document1]\r\nDocumentPath=Sch\\Top.SchDoc\r\n").unwrap();
+        let sch = sch_dir.join("Top.SchDoc");
+        std::fs::write(&sch, "fake").unwrap();
+        assert_eq!(find_for(sch.to_str().unwrap()), Some(prj.to_str().unwrap().to_string()));
     }
 }
